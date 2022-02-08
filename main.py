@@ -10,6 +10,8 @@ global_workDir = "abc/abc1"
 tempFilePath = os.path.join(global_workDir, "log.txt")
 
 print("tempFilePath:" + tempFilePath)
+
+
 def print_hi(name):
     # Use a breakpoint in the code line below to debug your script.
     print(f'Hi, {name}')  # Press ⌘F8 to toggle the breakpoint.
@@ -22,6 +24,7 @@ def print_hi(name):
     print(output.group(1))
     print(len(output.groups()))
 
+
 def update(svnPath):
     if not os.path.exists(svnPath):
         print(f"svnPath: {svnPath} is not exists, exit.")
@@ -30,16 +33,18 @@ def update(svnPath):
     run_cmd("svn up")
     run_cmd("svn clean")
 
+
 def collect_status_info():
     run_cmd(f"svn st | tee {tempFilePath}")
     infoDic = {
-        'dir':"",
-        'tree':{},
-        'txt':{},
+        'dir': "",
+        'tree': {},
+        'txt': {},
     }
     # todo
 
     return infoDic
+
 
 def resolve_conflict(info):
     # 优先处理 tree conflict
@@ -56,14 +61,33 @@ def resolve_conflict(info):
 
     return
 
+
 def run_cmd(cmdStr):
     osCmd = "{bashPath} -c {cmd}".format(bashPath=global_batchPath, cmd=cmdStr)
     print("running:" + osCmd)
 
-def load_cfg():
+
+def load_cfg(cfgPath):
+    if not os.path.exists(cfgPath):
+        cfgPath = "./config.txt"
+
+    if not os.path.exists(cfgPath):
+        return False
+
+    print("cfgPath = " + os.path.abspath(cfgPath))
+    cfgFile = open(cfgPath, "r")
+
+
+    # cfgContent = cfgFile.readlines()
+    cfgContent2 = cfgFile.read()
+    print("cfgContent:")
+    # print(cfgContent)
+    print("cfgContent2:")
+    print(cfgContent2)
+
     cfgDic = {
-        'global_batchPath':global_batchPath,
-        'global_workDir':global_workDir,
+        'global_batchPath': global_batchPath,
+        'global_workDir': global_workDir,
         'tempFilePath': tempFilePath,
     }
 
@@ -71,12 +95,13 @@ def load_cfg():
     for k, v in cfgDic.items():
         if not os.path.exists(v):
             result = False
-            print("cfg.{key} = {value} is not exists, please check.".format(key = k, value = v))
+            print("cfg.{key} = {value} is not exists, please check.".format(key=k, value=v))
 
     return result
 
+
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    if load_cfg():
+    if load_cfg(""):
         print_hi('PyCharm')
         run_cmd("grep -ho 'abc' *")
