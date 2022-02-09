@@ -2,48 +2,89 @@
 
 # Press ⌃R to execute it or replace it with your code.
 # Press Double ⇧ to search everywhere for classes, files, tool windows, actions, and settings.
+import io
+import json
 import re
 import os
+import sys
 
-global_batchPath = "/ect/bin/bash"
-global_workDir = "abc/abc1"
-tempFilePath = os.path.join(global_workDir, "log.txt")
+# bash Shell 可执行路径
+BATCH_PATH = ""
+# 当前工具可用于缓存数据的目录
+CACHE_DIR = ""
+# svn 状态路径目录
+SVN_STATUS_CACHE_PATH = ""
+# 汇总报告路径
+REPORT_PATH = ""
+# svn 工作目录，即需要处理的项目路径
+SVN_WORK_PATH = ""
 
-print("tempFilePath:" + tempFilePath)
+print("tempFilePath:" + SVN_STATUS_CACHE_PATH)
 
-
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press ⌘F8 to toggle the breakpoint.
-    str = "hello world!, 2l" \
-          "abllo" \
-          "loogb"
-    output = re.search("(\S)l", str)
-    print(output)
-    print(output.group())
-    print(output.group(1))
-    print(len(output.groups()))
+is_dirty = True
+report_cache = None
 
 
-def update(svnPath):
-    if not os.path.exists(svnPath):
-        print(f"svnPath: {svnPath} is not exists, exit.")
+def report():
+    global is_dirty
+    is_dirty = False
 
-    os.chdir(svnPath)
+    return report_cache
+
+
+def output_report():
+    global is_dirty
+    if is_dirty:
+        report()
+
+    if report_cache is None:
+        print("Nothing output")
+
+
+def update():
     run_cmd("svn up")
     run_cmd("svn clean")
 
+    global is_dirty
+    is_dirty = True
 
-def collect_status_info():
-    run_cmd(f"svn st | tee {tempFilePath}")
-    infoDic = {
-        'dir': "",
-        'tree': {},
-        'txt': {},
+
+def collect_status_info() -> dict:
+    """
+    整理 svn 状态，将冲突分为 tree 和 txt，并记录具体冲突类型和路径
+    :return:
+    dict = {
+        "tree": [("conflictType", "conflictPath"), ...],
+        ...
     }
-    # todo
+    """
+    info_dic = {
+        'tree': [],
+        'txt': [],
+    }
 
-    return infoDic
+    # 树冲突
+    tree_conflict_pattern = r"[AD]\s+?\+\s*?C\s+?(\S+)"
+    # 文本冲突
+    txt_conflict_pattern = r"C\s+?(\S+)"
+
+    run_cmd(f"svn st | tee {SVN_STATUS_CACHE_PATH}")
+
+    file_obj = open(SVN_STATUS_CACHE_PATH, "r")
+    file_list = file_obj.readlines()
+    for line_str in file_list:
+        match_item = re.match(tree_conflict_pattern, line_str)
+        if match_item is not None:
+            conflict_path = match_item.group(1)
+            conflict_type = "tree" if conflict_path.find(".") == -1 else "txt"
+            info_dic[conflict_type].append((match_item[0:1], conflict_path))
+        else:
+            match_item = re.match(txt_conflict_pattern, line_str)
+            if match_item is not None:
+                conflict_path = match_item.group(1)
+                info_dic["txt"].append((match_item[0:1], conflict_path))
+
+    return info_dic
 
 
 def resolve_conflict(info):
@@ -51,48 +92,67 @@ def resolve_conflict(info):
     if len(info['tree']) > 0:
         for k, v in info['tree'].items():
             run_cmd(f"svn revert -R {v}")
-    elif len(info['txt']) > 0:
+
+    if len(info['txt']) > 0:
         run_cmd("svn resolve -R --accept theirs-full")
 
-    # recheck
-    if collect_status_info(info.dir) != None:
+    # 重新获取冲突数据，如果仍有冲突残余，视为失败，退出处理
+    recheck_info = collect_status_info()
+    if len(recheck_info["tree"]) > 0 or len(recheck_info["txt"]) > 0:
         print("ERROR:Resolve conflict filed, please resolve manually.")
-        return
-
-    return
-
-
-def run_cmd(cmdStr):
-    osCmd = "{bashPath} -c {cmd}".format(bashPath=global_batchPath, cmd=cmdStr)
-    print("running:" + osCmd)
-
-
-def load_cfg(cfgPath):
-    if not os.path.exists(cfgPath):
-        cfgPath = "./config.txt"
-
-    if not os.path.exists(cfgPath):
         return False
 
-    print("cfgPath = " + os.path.abspath(cfgPath))
-    cfgFile = open(cfgPath, "r")
+    return True
 
 
-    # cfgContent = cfgFile.readlines()
-    cfgContent2 = cfgFile.read()
-    print("cfgContent:")
-    # print(cfgContent)
-    print("cfgContent2:")
-    print(cfgContent2)
+def run_cmd(cmd_str):
+    os_cmd = f"{BATCH_PATH} -c {cmd_str}"
+    print("running:" + os_cmd)
 
-    cfgDic = {
-        'global_batchPath': global_batchPath,
-        'global_workDir': global_workDir,
-        'tempFilePath': tempFilePath,
+
+def load_cfg_by_dic(params):
+    if params is None:
+        return False
+
+    global BATCH_PATH
+    BATCH_PATH = params["BATCH_PATH"]
+
+    global CACHE_DIR
+    CACHE_DIR = params["CACHE_DIR"]
+
+    global SVN_STATUS_CACHE_PATH
+    SVN_STATUS_CACHE_PATH = os.path.join(CACHE_DIR, params["SVN_STATUS_FILE_NAME"])
+
+    global REPORT_PATH
+    REPORT_PATH = os.path.join(CACHE_DIR, params["REPORT_FILE_NAME"])
+
+    return check_cfg()
+
+
+def load_cfg_by_file(cfg_path):
+    if not os.path.exists(cfg_path):
+        cfg_path = "./config.txt"
+
+    if not os.path.exists(cfg_path):
+        return False
+
+    cfg_file = open(cfg_path, "r")
+    cfg_dic = json.loads(cfg_file.read())
+
+    return load_cfg_by_dic(cfg_dic)
+
+
+def check_cfg():
+    result = True
+
+    cfg_dic = {
+        'BATCH_PATH': BATCH_PATH,
+        'CACHE_DIR': CACHE_DIR,
+        'SVN_STATUS_CACHE_PATH': SVN_STATUS_CACHE_PATH,
+        'SVN_WORK_DIR': SVN_WORK_PATH,
     }
 
-    result = True
-    for k, v in cfgDic.items():
+    for k, v in cfg_dic.items():
         if not os.path.exists(v):
             result = False
             print("cfg.{key} = {value} is not exists, please check.".format(key=k, value=v))
@@ -100,8 +160,16 @@ def load_cfg(cfgPath):
     return result
 
 
-# Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    if load_cfg(""):
-        print_hi('PyCharm')
-        run_cmd("grep -ho 'abc' *")
+    if not load_cfg_by_file("./config.json"):
+        print("Error:Load config filed, exit.")
+        sys.exit()
+
+    os.chdir(SVN_WORK_PATH)
+    update()
+    collect_status_info()
+
+    if not resolve_conflict():
+        sys.exit()
+
+    out_put()

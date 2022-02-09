@@ -1,0 +1,26 @@
+$ svn st
+A  +  C newd1
+      >   local dir edit, incoming dir delete or move upon update
+?       newd1\subfile.txt
+?       newd2
+C       newfile.txt
+?       newfile.txt.mine
+?       newfile.txt.r32
+?       newfile.txt.r33
+M       test.txt
+Summary of conflicts:
+  Text conflicts: 1
+  Tree conflicts: 1
+
+$ svn st
+A  +  C abc.lua
+      >   local file edit, incoming file delete or move upon update
+!       defaultAuthorTest.txt
+D     C defaultauthor.txt
+      >   local file delete, incoming file edit upon update
+?       log.txt
+A  +  C newd1
+      >   local dir edit, incoming dir delete or move upon update
+?       newd1\subfile.txt
+?       newd2
+M       test.txt
