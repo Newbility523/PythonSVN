@@ -4,8 +4,10 @@
 # Press Double ⇧ to search everywhere for classes, files, tool windows, actions, and settings.
 import io
 import json
+import platform
 import re
 import os
+import subprocess
 import sys
 
 # bash Shell 可执行路径
@@ -18,8 +20,10 @@ SVN_STATUS_CACHE_PATH = ""
 REPORT_PATH = ""
 # svn 工作目录，即需要处理的项目路径
 SVN_WORK_PATH = ""
-
-print("tempFilePath:" + SVN_STATUS_CACHE_PATH)
+# svn 账号
+USER_NAME = ""
+# svn 密码
+PASSWORD = ""
 
 is_dirty = True
 report_cache = None
@@ -32,6 +36,13 @@ def report():
     return report_cache
 
 
+def update_identify(user_name, password):
+    global USER_NAME
+    USER_NAME = user_name
+    global PASSWORD
+    PASSWORD = password
+
+
 def output_report():
     global is_dirty
     if is_dirty:
@@ -39,6 +50,14 @@ def output_report():
 
     if report_cache is None:
         print("Nothing output")
+
+
+def diff(r_from="base", r_to="head"):
+    run_cmd(f"svn diff -r {r_from}:{r_to} --summarize")
+
+
+def revert():
+    run_cmd("svn revert . -R")
 
 
 def update():
@@ -105,6 +124,12 @@ def resolve_conflict(info):
     return True
 
 
+def run_svn_cmd(svn_command):
+    pass
+    # os_cmd = f"{BATCH_PATH} -c {cmd_str}"
+    # print("running:" + os_cmd)
+
+
 def run_cmd(cmd_str):
     os_cmd = f"{BATCH_PATH} -c {cmd_str}"
     print("running:" + os_cmd)
@@ -161,15 +186,45 @@ def check_cfg():
 
 
 if __name__ == '__main__':
-    if not load_cfg_by_file("./config.json"):
-        print("Error:Load config filed, exit.")
-        sys.exit()
+    # if not load_cfg_by_file("./config.json"):
+    #     print("Error:Load config filed, exit.")
+    #     sys.exit()
+    #
+    # os.chdir(SVN_WORK_PATH)
+    # update()
+    # collect_status_info()
+    #
+    # if not resolve_conflict():
+    #     sys.exit()
+    # out_put()
+    pipe = subprocess.Popen(
+        # ["svn"],
+        # "\"C:/Program Files/Git/bin/bash.exe\" -c \"svn\"",
+        # "\"C:/Program Files/Git/bin/bash.exe\" \"C:/Program Files/TortoiseSVN/bin/svn.exe\"",
+        # "-c \"svn\"",
+        # "exec " + "ping www.baidu.com",
+        # shell=True,
+        # # shell=False,
+        # executable="C:/Program Files/Git/bin/bash.exe",
+        # stdout=subprocess.PIPE,
+        "\"C:/Program Files/Git/bin/bash.exe\" \"grep\"",
+        shell = False,
+        stdout = subprocess.PIPE,
+    )
 
-    os.chdir(SVN_WORK_PATH)
-    update()
-    collect_status_info()
+    c1, c2 = None, None
+    try:
+        c1, c2 = pipe.communicate(timeout=5)
+        win = platform.system() == "Windows"
+        # print(c1.decode(encoding=("gbk" if win else "utf8")))
+    except subprocess.TimeoutExpired:
+        print("Kill pipe")
+        pipe.kill()
+    finally:
+        c1, c2 = pipe.communicate()
+        win = platform.system() == "Windows"
+        # print(c1.decode(encoding=("gbk" if win else "utf8")))
 
-    if not resolve_conflict():
-        sys.exit()
 
-    out_put()
+
+    # print(pipe.stdout.read().decode(encoding=("gbk" if win else "utf8")))

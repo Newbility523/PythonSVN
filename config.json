@@ -1,7 +1,9 @@
 {
-    "BATCH_PATH": "/ect/bin/bash.exe",
+    "BATCH_PATH": "C:/Program Files/Git/bin/bash.exe",
     "CACHE_DIR": "/ect/bin/bash",
     "SVN_STATUS_FILE_NAME": "svn_status_log.txt",
     "REPORT_FILE_NAME": "report.json",
-    "SVN_WORK_DIR": ""
+    "SVN_WORK_DIR": "",
+    "USER_NAME": "clientdev",
+    "PASSWORD": "N3Dt9Ezm6EYS9kyax4ln8lLlODZ2QT0Ludj",
 }
