@@ -24,3 +24,11 @@ A  +  C newd1
 ?       newd1\subfile.txt
 ?       newd2
 M       test.txt
+
+冲突特征
+A + C 或者 A D
+
+
+$ svn diff -r 38:40 --summarize
+M       defaultAuthorTest.txt
+A       newFileAfter39.txt
