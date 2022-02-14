@@ -29,6 +29,8 @@ PASSWORD = ""
 is_dirty = True
 report_cache = None
 
+cwd = ""
+
 
 def report():
     global is_dirty
@@ -37,11 +39,14 @@ def report():
     return report_cache
 
 
-def update_identify(user_name, password):
-    global USER_NAME
-    USER_NAME = user_name
-    global PASSWORD
-    PASSWORD = password
+def identify(user_name, password):
+    if user_name is not None:
+        global USER_NAME
+        USER_NAME = user_name
+
+    if password is not None:
+        global PASSWORD
+        PASSWORD = password
 
 
 def output_report():
@@ -82,9 +87,9 @@ def fill_info(content):
 def revision(target):
     output = -1
     if is_string(target):
-        output = run_svn_cmd(f"svn info -r {target} --show-item revision")
+        output = run_svn_cmd(f"svn info -r {target} --show-item revision")[0]
     else:
-        output = run_svn_cmd(f"svn info --show-item revision")
+        output = run_svn_cmd(f"svn info --show-item revision")[0]
 
     try:
         output = int(output)
@@ -96,7 +101,7 @@ def revision(target):
 
 
 def diff(r_from="base", r_to="head"):
-    output = run_cmd(f"svn diff -r {r_from}:{r_to} --summarize")
+    output = run_svn_cmd(f"svn diff -r {r_from}:{r_to} --summarize")[0]
     pattern = r"\s*?([AMD])\s+?(\S+)"
     result = {
         "M": [],
@@ -116,15 +121,21 @@ def diff(r_from="base", r_to="head"):
 
 
 def revert():
-    run_cmd("svn revert . -R")
+    run_svn_cmd("svn revert . -R")
 
 
 def update():
-    run_cmd("svn up")
-    # run_cmd("svn clean")
+    run_svn_cmd("svn up")
+    # run_svn_cmd("svn clean")
 
     global is_dirty
     is_dirty = True
+
+
+def resolve_conflict_auto():
+    output = collect_status_info()
+    if not resolve_conflict(output):
+        raise Exception("resolve_conflict_auto failed.")
 
 
 def collect_status_info() -> dict:
@@ -142,16 +153,16 @@ def collect_status_info() -> dict:
     }
 
     # 树冲突
-    tree_conflict_pattern = r"[AD](\s+?\+\s+?|\s+?)C\s+?(\S+)"
+    tree_conflict_pattern = r"[!AD](\s+?\+\s+?|\s+?)C\s+?(\S+)"
     # 文本冲突
     txt_conflict_pattern = r"C\s+?(\S+)"
 
     # 暂时不支持管道
-    # run_cmd(f"svn st | tee {SVN_STATUS_CACHE_PATH}")
+    # run_svn_cmd(f"svn st | tee {SVN_STATUS_CACHE_PATH}")
     # file_obj = open(SVN_STATUS_CACHE_PATH, "r")
     # file_list = file_obj.readlines()
 
-    output = run_cmd(f"svn st")
+    output = run_svn_cmd(f"svn st")[0]
     file_list = output.splitlines()
     for line_str in file_list:
         match_item = re.match(tree_conflict_pattern, line_str)
@@ -168,21 +179,22 @@ def collect_status_info() -> dict:
 
 
 def resolve_conflict(info):
-    # 优先处理 tree conflict
     tree_conflict_count = len(info['tree'])
+    print(f"tree conflict: {tree_conflict_count}")
+    txt_conflict_count = len(info['txt'])
+    print(f"txt conflict: {txt_conflict_count}")
+
+    # 优先处理 tree conflict
     if tree_conflict_count > 0:
-        print(f"tree conflict: {tree_conflict_count}")
         count = 0
         for item in info['tree']:
             count += 1
             print(f"resolving ({count}/{tree_conflict_count})...")
-            run_cmd(f"svn revert -R {item[1]}")
+            run_svn_cmd(f"svn revert -R {item[1]}")
 
-    txt_conflict_count = len(info['txt'])
     if txt_conflict_count > 0:
-        print(f"txt conflict: {txt_conflict_count}")
         print(f"resolving txt conflict together...")
-        run_cmd("svn resolve -R --accept theirs-full")
+        run_svn_cmd("svn resolve -R --accept theirs-full")
 
     # 重新获取冲突数据，如果仍有冲突残余，视为失败，退出处理
     print("recheck")
@@ -196,29 +208,39 @@ def resolve_conflict(info):
     return True
 
 
+def clean_unversioned():
+    run_svn_cmd("svn cleanup --remove-unversioned")
+
+
 def run_svn_cmd(svn_command):
-    return run_cmd(svn_command)
+    return run_cmd(svn_command, timeout=60)
 
 
-def run_cmd(cmd_str):
+def run_cmd(cmd_str, timeout=-1):
     print(f"running cmd:{cmd_str}")
     pipe = subprocess.Popen(
         cmd_str,
         shell=False,
         stdout=subprocess.PIPE,
-        cwd=SVN_WORK_PATH,
+        cwd=cwd,
     )
 
-    c1, c2 = None, None
+    returnCode, stdout, stderr = None, None, None
     try:
-        c1, c2 = pipe.communicate(timeout=20)
+        stdout, stderr = pipe.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         print("Exception:Command timeout, Kill.")
         pipe.kill()
     finally:
-        c1, c2 = pipe.communicate()
+        stdout, stderr = pipe.communicate()
+        returnCode = pipe.returncode
         is_win = platform.system() == "Windows"
-        return c1.decode(encoding=("gbk" if is_win else "utf8"))
+        if stdout is not None:
+            outStr = stdout.decode(encoding=("gbk" if is_win else "utf8"))
+        if stderr is not None:
+            stderr = stderr.decode(encoding=("gbk" if is_win else "utf8"))
+
+        return outStr, stderr, returnCode
 
 
 def load_cfg_by_dic(params):
@@ -274,18 +296,9 @@ def check_cfg():
     return result
 
 
-def generate_todoabname():
-    diff_dic = diff()
-    content = ""
-    for item in diff_dic["A"]:
-        p = item.replace("\\", "/")
-        content = content + f"{p}\n"
-
-    fo = open(os.path.join(SVN_WORK_PATH, "ToDoABName.txt"), "w")
-    fo.write(content)
-    fo.flush()
-    fo.close()
-
+#
+# def init(params):
+#
 
 def init(params):
     if params is None:
@@ -308,11 +321,9 @@ if __name__ == '__main__':
 
     # generate_todoabname()
 
+    set
     update()
-    output = collect_status_info()
-
-    if not resolve_conflict(output):
-        sys.exit()
+    resolve_conflict_auto()
 
     print("Done.")
 
