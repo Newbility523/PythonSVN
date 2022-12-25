@@ -1,333 +1,138 @@
-# This is a sample Python script.
-
-# Press ⌃R to execute it or replace it with your code.
-# Press Double ⇧ to search everywhere for classes, files, tool windows, actions, and settings.
-import io
-import json
-import platform
 import re
+import shutil
+from functools import wraps
 import os
-import subprocess
-import sys
-import types
+import logging
 
-# bash Shell 可执行路径
-BATCH_PATH = ""
-# 当前工具可用于缓存数据的目录
-CACHE_DIR = ""
-# svn 状态路径目录
-SVN_STATUS_CACHE_PATH = ""
-# 汇总报告路径
-REPORT_PATH = ""
-# svn 工作目录，即需要处理的项目路径
-SVN_WORK_PATH = ""
-# svn 账号
-USER_NAME = ""
-# svn 密码
-PASSWORD = ""
-
-is_dirty = True
-report_cache = None
-
-cwd = ""
+from .svn_core import svn_core
 
 
-def report():
-    global is_dirty
-    is_dirty = False
+# todo typer 接入
+def once_cwd_decorator(func):
+    @wraps(func)
+    def wrapFunction(*args, **kwargs):
+        once_cwd = kwargs.get("once_cwd")
+        print(func.__name__, "called, once_cwd", once_cwd)
+        if once_cwd is not None:
+            global working_cwd
+            working_cwd = once_cwd
+        result = func(*args, **kwargs)
+        # outStr, stderr, returnCode = func(*args, **kwargs)
+        if once_cwd is not None:
+            global cwd
+            working_cwd = cwd
+        return result
 
-    return report_cache
-
-
-def identify(user_name, password):
-    if user_name is not None:
-        global USER_NAME
-        USER_NAME = user_name
-
-    if password is not None:
-        global PASSWORD
-        PASSWORD = password
-
-
-def output_report():
-    global is_dirty
-    if is_dirty:
-        report()
-
-    if report_cache is None:
-        print("Nothing output")
+    return wrapFunction
 
 
-def is_string(content):
-    if content is None:
-        return False
+class svn(svn_core):
+    def __init__(self):
+        super(svn_core, self).__init__()
 
-    if len(content) == 0:
-        return False
+    def same_path(self, svn_path: str, once_cwd: object = None) -> bool:
+        """
+        检查当前目录是否和指定的svn目录一致
+        :param svn_path:
+        :param once_cwd:
+        :return:
+        """
+        url, _, _ = self.run_svn_cmd(f"svn info --show-item url")
+        return svn_path == url.strip()
 
-    return not content.isspace()
-
-
-def commit(msg):
-    if not is_string(msg):
-        print("commit msg is empty, exit.")
-        return
-
-    run_svn_cmd(f"svn ci -m {msg}")
-
-
-def info(path=None, vision=None):
-    output = run_svn_cmd(f"svn info {path}")
-
-
-def fill_info(content):
-    return None
-
-
-def revision(target):
-    output = -1
-    if is_string(target):
-        output = run_svn_cmd(f"svn info -r {target} --show-item revision")[0]
-    else:
-        output = run_svn_cmd(f"svn info --show-item revision")[0]
-
-    try:
-        output = int(output)
-    except IndentationError:
-        print("Error:Can't get version")
-        output = -1
-    finally:
-        return output
-
-
-def diff(r_from="base", r_to="head"):
-    output = run_svn_cmd(f"svn diff -r {r_from}:{r_to} --summarize")[0]
-    pattern = r"\s*?([AMD])\s+?(\S+)"
-    result = {
-        "M": [],
-        "A": [],
-        "D": [],
-    }
-
-    for item in output.splitlines():
-        match_item = re.match(pattern, item)
-        if match_item is not None:
-            if match_item.group(2) != ".":
-                tag = match_item.group(1)
-                result[tag].append(match_item.group(2))
-
-    print(result)
-    return result
-
-
-def revert():
-    run_svn_cmd("svn revert . -R")
-
-
-def update():
-    run_svn_cmd("svn up")
-    # run_svn_cmd("svn clean")
-
-    global is_dirty
-    is_dirty = True
-
-
-def resolve_conflict_auto():
-    output = collect_status_info()
-    if not resolve_conflict(output):
-        raise Exception("resolve_conflict_auto failed.")
-
-
-def collect_status_info() -> dict:
-    """
-    整理 svn 状态，将冲突分为 tree 和 txt，并记录具体冲突类型和路径
-    :return:
-    dict = {
-        "tree": [("conflictType", "conflictPath"), ...],
-        ...
-    }
-    """
-    info_dic = {
-        'tree': [],
-        'txt': [],
-    }
-
-    # 树冲突
-    tree_conflict_pattern = r"[!AD](\s+?\+\s+?|\s+?)C\s+?(\S+)"
-    # 文本冲突
-    txt_conflict_pattern = r"C\s+?(\S+)"
-
-    # 暂时不支持管道
-    # run_svn_cmd(f"svn st | tee {SVN_STATUS_CACHE_PATH}")
-    # file_obj = open(SVN_STATUS_CACHE_PATH, "r")
-    # file_list = file_obj.readlines()
-
-    output = run_svn_cmd(f"svn st")[0]
-    file_list = output.splitlines()
-    for line_str in file_list:
-        match_item = re.match(tree_conflict_pattern, line_str)
-        if match_item is not None:
-            # conflict_type = "tree" if conflict_path.find(".") == -1 else "txt"
-            info_dic["tree"].append((match_item.group(0)[0:1], match_item.group(2)))
+    def ensure_dir(self, svn_path: str, path, depth="infinity"):
+        '''
+        depth 支持的参数('empty', 'files', 'immediates', or 'infinity')
+        path checkout到目标目录
+        '''
+        if os.path.exists(path) and same_path(svn_path, once_cwd=path):
+            self.update(once_cwd=path)
         else:
-            match_item = re.match(txt_conflict_pattern, line_str)
-            if match_item is not None:
-                conflict_path = match_item.group(1)
-                info_dic["txt"].append((match_item.group(0)[0:1], conflict_path))
-
-    return info_dic
+            self.run_svn_cmd(f"svn co --depth={depth} {svn_path} '{path}'")
 
 
-def resolve_conflict(info):
-    tree_conflict_count = len(info['tree'])
-    print(f"tree conflict: {tree_conflict_count}")
-    txt_conflict_count = len(info['txt'])
-    print(f"txt conflict: {txt_conflict_count}")
+    @once_cwd_decorator
+    def resolve_conflict_auto(self, once_cwd=None):
+        output = self.collect_status_info()
+        if not self.resolve_conflict(output):
+            raise Exception("resolve_conflict_auto failed.")
 
-    # 优先处理 tree conflict
-    if tree_conflict_count > 0:
-        count = 0
-        for item in info['tree']:
-            count += 1
-            print(f"resolving ({count}/{tree_conflict_count})...")
-            run_svn_cmd(f"svn revert -R {item[1]}")
+    def resolve_conflict_prefer(self, accept=ACCEPT_THEIRS_FULL, files=None):
+        files_str = self.particular_files_str(files)
+        self.run_svn_cmd(f"svn resolve --accept {accept} -R {files_str}")
 
-    if txt_conflict_count > 0:
-        print(f"resolving txt conflict together...")
-        run_svn_cmd("svn resolve -R --accept theirs-full")
+    def resolve_conflict(self, info):
+        tree_conflict_count = len(info['conflict']['tree'])
+        log(f"tree conflict: {tree_conflict_count}")
+        txt_conflict_count = len(info['conflict']['txt'])
+        log(f"txt conflict: {txt_conflict_count}")
 
-    # 重新获取冲突数据，如果仍有冲突残余，视为失败，退出处理
-    print("recheck")
-    recheck_info = collect_status_info()
-    if len(recheck_info["tree"]) > 0 or len(recheck_info["txt"]) > 0:
-        print("ERROR:Resolve conflict filed, please resolve manually.")
-        return False
+        # 优先处理 tree conflict
+        if tree_conflict_count > 0:
+            count = 0
+            for item in info['conflict']['tree']:
+                count += 1
+                log(f"resolving ({count}/{tree_conflict_count})...")
+                self.run_svn_cmd(f"svn revert -R '{item[1]}' --depth infinity")
 
-    print("recheck success")
+        if txt_conflict_count > 0:
+            log(f"resolving txt conflict together...")
+            self.run_svn_cmd("svn resolve -R --accept theirs-full")
 
-    return True
+        # 重新获取冲突数据，如果仍有冲突残余，视为失败，退出处理
+        log("recheck")
+        recheck_info = self.collect_status_info()
+        if len(recheck_info['conflict']["tree"]) > 0 or len(recheck_info['conflict']["txt"]) > 0:
+            log("ERROR:Resolve conflict filed, please resolve manually.")
+            return False
 
+        log("recheck success")
 
-def clean_unversioned():
-    run_svn_cmd("svn cleanup --remove-unversioned")
+        return True
 
-
-def run_svn_cmd(svn_command):
-    return run_cmd(svn_command, timeout=60)
-
-
-def run_cmd(cmd_str, timeout=-1):
-    print(f"running cmd:{cmd_str}")
-    pipe = subprocess.Popen(
-        cmd_str,
-        shell=False,
-        stdout=subprocess.PIPE,
-        cwd=cwd,
-    )
-
-    returnCode, stdout, stderr = None, None, None
-    try:
-        stdout, stderr = pipe.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        print("Exception:Command timeout, Kill.")
-        pipe.kill()
-    finally:
-        stdout, stderr = pipe.communicate()
-        returnCode = pipe.returncode
-        is_win = platform.system() == "Windows"
-        if stdout is not None:
-            outStr = stdout.decode(encoding=("gbk" if is_win else "utf8"))
-        if stderr is not None:
-            stderr = stderr.decode(encoding=("gbk" if is_win else "utf8"))
-
-        return outStr, stderr, returnCode
-
-
-def load_cfg_by_dic(params):
-    if params is None:
-        return False
-
-    global BATCH_PATH
-    BATCH_PATH = params["BATCH_PATH"]
-
-    global CACHE_DIR
-    CACHE_DIR = params["CACHE_DIR"]
-
-    global SVN_WORK_PATH
-    SVN_WORK_PATH = params["SVN_WORK_PATH"]
-
-    global SVN_STATUS_CACHE_PATH
-    SVN_STATUS_CACHE_PATH = os.path.join(CACHE_DIR, params["SVN_STATUS_FILE_NAME"])
-
-    global REPORT_PATH
-    REPORT_PATH = os.path.join(CACHE_DIR, params["REPORT_FILE_NAME"])
-
-    return check_cfg()
-
-
-def load_cfg_by_file(cfg_path):
-    if not os.path.exists(cfg_path):
-        cfg_path = "./config.txt"
-
-    if not os.path.exists(cfg_path):
-        return False
-
-    cfg_file = open(cfg_path, "r")
-    cfg_dic = json.loads(cfg_file.read())
-
-    return load_cfg_by_dic(cfg_dic)
-
-
-def check_cfg():
-    result = True
-
-    cfg_dic = {
-        'BATCH_PATH': BATCH_PATH,
-        'CACHE_DIR': CACHE_DIR,
-        # 'SVN_STATUS_CACHE_PATH': SVN_STATUS_CACHE_PATH,
-        'SVN_WORK_PATH': SVN_WORK_PATH,
-    }
-
-    for k, v in cfg_dic.items():
-        if not os.path.exists(v):
-            result = False
-            print("cfg.{key} = {value} is not exists, please check.".format(key=k, value=v))
-
-    return result
-
-
-#
-# def init(params):
-#
-
-def init(params):
-    if params is None:
-        print("Error:Init failed.")
-        return
-
-    if type(params) is dict:
-        load_cfg_by_dic(params)
-    elif type(params) is str:
-        load_cfg_by_file(params)
-    else:
-        print("Error:Init failed.")
-        return
+    def clean_unversioned(self):
+        self.run_svn_cmd("svn cleanup --remove-unversioned")
 
 
 if __name__ == '__main__':
-    if not load_cfg_by_file("./config.json"):
-        print("Error:Load config filed, exit.")
-        sys.exit()
+    # if not load_cfg_by_file("./config.json"):
+    #     log("Error:Load config filed, exit.")
+    #     sys.exit()
+    #
+    # cwd = SVN_WORK_PATH
+    # log(collect_status_info())
 
-    # generate_todoabname()
+    # p = r"E:/SvnTest/clients/c1/project1/UI"
+    # commit_replace(msg="replace", once_cwd=p)
+    # log("中文")
+    # # log(os.system("ping www.baidu.com"))
+    # p = r"E:\SvnTest\clients\c2\project1\UI\Base"
+    # log(os.system(f"svn info \"{p}\""))
+    # commit_replace()
+    # log("Done.")
 
-    set
-    update()
-    resolve_conflict_auto()
+    # test 1
+    # set_cwd(r"D:\tempCheck\Util")
+    # source_path = r"D:\tempCheck\Util"
+    # output_path = r"D:\tempCheck\Util2"
+    # source_path = source_path.replace("\\", "/").strip("/")
+    # output_path = output_path.replace("\\", "/").strip("/")
+    #
+    # modify = []
+    # remove = []
+    #
+    # diff_dict = diff("base", "head", once_cwd=source_path)
+    # modify = diff_dict['modify'] + diff_dict['add']
+    # remove = diff_dict['remove']
+    #
+    # delete_files(remove)
+    # test 1 end
 
-    print("Done.")
-
-
-
-
-
+    # test 2
+    svn = svn()
+    svn.set_cwd(r"D:\tempCheck")
+    # test_1()
+    a = svn.diff(100, 101)
+    print(a)
+    # test 2 end
+    pass

@@ -1,9 +1,0 @@
-{
-    "BATCH_PATH": "C:/Program Files/Git/bin/bash.exe",
-    "CACHE_DIR": "E:/PythonProject/PythonSVN",
-    "SVN_STATUS_FILE_NAME": "svn_status_log.txt",
-    "REPORT_FILE_NAME": "report.json",
-    "SVN_WORK_PATH": "E:/SvnTest/clients/c1/project1",
-    "USER_NAME": "clientdev",
-    "PASSWORD": "N3Dt9Ezm6EYS9kyax4ln8lLlODZ2QT0Ludj"
-}

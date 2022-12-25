@@ -1,3 +1,0 @@
-'global_batchPath': global_batchPath,
-'global_workDir': global_workDir,
-'tempFilePath': tempFilePath,
