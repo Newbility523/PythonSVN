@@ -4,33 +4,10 @@ import time
 from functools import wraps
 import os
 import logging
-
 import helper
 
-# accept params
-ACCEPT_BASE = "base"
-ACCEPT_WORKING = "working"
-ACCEPT_MINE_CONFLICT = "mine-conflict"
-ACCEPT_THEIRS_CONFLICT = "theirs-conflict"
-ACCEPT_MINE_FULL = "mine-full"
-ACCEPT_THEIRS_FULL = "theirs-full"
 
-def once_cwd_decorator(func):
-    @wraps(func)
-    def wrapFunction(*args, **kwargs):
-        once_cwd = kwargs.get("once_cwd")
-        print(func.__name__, "called, once_cwd", once_cwd)
-        if once_cwd is not None:
-            global working_cwd
-            working_cwd = once_cwd
-        result = func(*args, **kwargs)
-        # outStr, stderr, returnCode = func(*args, **kwargs)
-        if once_cwd is not None:
-            global cwd
-            working_cwd = cwd
-        return result
 
-    return wrapFunction
 
 
 def log(*args):
@@ -43,29 +20,53 @@ def log(*args):
 
 
 class svn_core:
-    # svn 账号
-    user_name = ""
-    # svn 密码
-    passwords = ""
-
-    is_dirty = True
-    report_cache = None
-
-    cwd = ""
-    working_cwd = ""
-    enable_log = False
-
+    ACCEPT_BASE = "base"
+    ACCEPT_WORKING = "working"
+    ACCEPT_MINE_CONFLICT = "mine-conflict"
+    ACCEPT_THEIRS_CONFLICT = "theirs-conflict"
+    ACCEPT_MINE_FULL = "mine-full"
+    ACCEPT_THEIRS_FULL = "theirs-full"
+    
     def __init__(self):
+        # svn 账号
+        self.user_name = ""
+        # svn 密码
+        self.passwords = ""
+
+        self.is_dirty = True
+        self.report_cache = None
+
+        self.cwd = ""
+        self.working_cwd = ""
+        self.enable_log = False
+        
         log_file_path = time.strftime("./logs/log_%Y-%m-%d-%H-%M-%S.log", time.localtime())
         logging.basicConfig(filename=log_file_path, level=logging.DEBUG)
         logging.debug("svn core init success.")
 
+    def once_cwd_decorator(func):
+        @wraps(func)
+        def wrapFunction(self, *args, **kwargs):
+            once_cwd = kwargs.get("once_cwd")
+            print(func.__name__, "called, once_cwd", once_cwd)
+            if once_cwd is not None:
+                self.working_cwd = once_cwd
+                
+            result = func(*args, **kwargs)
+            # outStr, stderr, returnCode = func(*args, **kwargs)
+            if once_cwd is not None:
+                self.working_cwd = self.cwd
+                
+            return result
+
+        return wrapFunction
+    
     def set_cwd(self, cwd_str: str) -> None:
         """
         设置工作目录
         """
         self.cwd = cwd_str
-        self.working_cwd = cwd
+        self.working_cwd = self.cwd
 
     @once_cwd_decorator
     def get_url(self):
@@ -78,6 +79,7 @@ class svn_core:
     def identify(self, user_name: str, passwords: str):
         """
         设置 svn 的账号密码
+        若不设置会使用系统缓存的 svn 账号
         :param user_name: 用户名
         :param passwords: 密码
         :return: None
@@ -122,82 +124,6 @@ class svn_core:
         files_str = self.particular_files_str(files)
 
         self.run_svn_cmd(f"svn commit -m \"{msg}\" {files_str}")
-
-        if once_cwd is not None:
-            self.working_cwd = self.cwd
-
-    def commit_files(self, msg=None, once_cwd=None, files=None):
-        """
-        强制提交文件，无视他人修改。
-        :param msg: 提交消息
-        :param once_cwd: 临时工作目录
-        :param files: 文件
-            str: 字符串，包含一个或个文件的字符串，注意以空格区分
-            list: 文件路径数组，可以绝对路径，或是相对于工作区路径
-        :return:
-        """
-        if not helper.is_string(msg):
-            logging.debug("commit msg is empty, exit!")
-            return
-
-        if once_cwd is not None:
-            self.working_cwd = once_cwd
-
-        files_str = self.particular_files_str(files)
-        self.update(files=files)
-        self.resolve_conflict_prefer(accept=ACCEPT_WORKING, files=files)
-
-        self.run_svn_cmd(f"svn add {files_str} --force")
-
-        self.commit(msg, files=files)
-
-        if once_cwd is not None:
-            self.working_cwd = self.cwd
-
-    def commit_replace(self, msg=None, once_cwd=None):
-        """
-        完全将指定目录作为版本内容，无视其他人的修改，只以本地为准
-        :param msg: 提交信息
-        :param once_cwd: 本次命令执行路径
-        :return: None
-        """
-
-        if not helper.is_string(msg):
-            logging.log("commit msg is empty, exit!")
-            return
-
-        if once_cwd is not None:
-            self.working_cwd = once_cwd
-
-        if not os.path.isdir(self.working_cwd):
-            logging.log("working_cwd is invalid, exit!")
-            return
-
-        (up_dir, name) = os.path.split(self.working_cwd)
-        temp_dir = os.path.join(up_dir, name + "_temp")
-
-        if os.path.isdir(temp_dir):
-            shutil.rmtree(temp_dir, True)
-
-        shutil.copytree(self.working_cwd, temp_dir, dirs_exist_ok=False)
-
-        self.update()
-
-        shutil.rmtree(self.working_cwd, True)
-        shutil.copytree(temp_dir, self.working_cwd, dirs_exist_ok=False)
-        shutil.rmtree(temp_dir, True)
-
-        cur_info = self.collect_status_info()
-        self.resolve_conflict_prefer(accept=ACCEPT_WORKING)
-
-        # 所有新增进行确认
-        self.run_svn_cmd(f"svn add . --force")
-        # 对所有删除进行确认
-        if len(cur_info['missing']) > 0:
-            for item in cur_info['missing']:
-                self.run_svn_cmd(f"svn remove '{item}' --force ")
-
-        self.commit(msg)
 
         if once_cwd is not None:
             self.working_cwd = self.cwd
